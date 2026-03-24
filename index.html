@@ -142,36 +142,27 @@
 
 <script>
 const API_URL = 'https://nzmcbrhddyvfjeqwmmye.supabase.co/functions/v1/collaboration-api';
-// Key loaded from URL hash (e.g. #key=xxx) or localStorage or prompt
-let API_KEY = localStorage.getItem('loom_api_key') || '';
-if (window.location.hash.startsWith('#key=')) {
-  API_KEY = decodeURIComponent(window.location.hash.substring(5));
-  localStorage.setItem('loom_api_key', API_KEY);
-  history.replaceState(null, '', window.location.pathname);
-}
-if (!API_KEY) {
-  API_KEY = prompt('Enter your Council API key:') || '';
-  if (API_KEY) localStorage.setItem('loom_api_key', API_KEY);
-}
-let isListening = false;
-let mediaRecorder = null;
-let audioChunks = [];
-let pollInterval = null;
-let lastMessageTs = null;
 
-// OpenRouter key for Whisper (stored same way as Slack key)
+// Parse both keys from URL hash before clearing it
+// Hash format: #key=SLACK_KEY&orkey=OPENROUTER_KEY
+const hash = window.location.hash || '';
+const hashParams = {};
+hash.replace('#', '').split('&').forEach(p => {
+  const [k, v] = p.split('=');
+  if (k && v) hashParams[k] = decodeURIComponent(v);
+});
+if (hashParams.key) localStorage.setItem('loom_api_key', hashParams.key);
+if (hashParams.orkey) localStorage.setItem('loom_or_key', hashParams.orkey);
+if (hash) history.replaceState(null, '', window.location.pathname);
+
+let API_KEY = localStorage.getItem('loom_api_key') || '';
 let OR_KEY = localStorage.getItem('loom_or_key') || '';
-if (window.location.hash.includes('orkey=')) {
-  const match = window.location.hash.match(/orkey=([^&]+)/);
-  if (match) {
-    OR_KEY = decodeURIComponent(match[1]);
-    localStorage.setItem('loom_or_key', OR_KEY);
-  }
-}
-if (!OR_KEY) {
-  OR_KEY = prompt('Enter your OpenRouter API key (for Whisper voice recognition):') || '';
-  if (OR_KEY) localStorage.setItem('loom_or_key', OR_KEY);
-}
+
+// Only prompt if keys are truly missing (not on first QR load)
+if (!API_KEY) API_KEY = prompt('Enter your Council API key:') || '';
+if (API_KEY) localStorage.setItem('loom_api_key', API_KEY);
+if (!OR_KEY) OR_KEY = prompt('Enter your OpenRouter API key (for voice):') || '';
+if (OR_KEY) localStorage.setItem('loom_or_key', OR_KEY);
 
 // Record audio with MediaRecorder, then send to Whisper for transcription
 async function toggleListening() {
