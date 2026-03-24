@@ -158,6 +158,12 @@ if (hash) history.replaceState(null, '', window.location.pathname);
 let API_KEY = localStorage.getItem('loom_api_key') || '';
 let OR_KEY = localStorage.getItem('loom_or_key') || '';
 
+let isListening = false;
+let mediaRecorder = null;
+let audioChunks = [];
+let pollInterval = null;
+let lastMessageTs = null;
+
 // Show key status after DOM loads
 window.addEventListener('DOMContentLoaded', () => {
   if (!API_KEY) document.getElementById('status').textContent = 'Slack key missing — rescan QR code';
