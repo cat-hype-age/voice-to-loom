@@ -133,7 +133,10 @@
 
 <div id="transcript" contenteditable="true" placeholder="Your message will appear here..."></div>
 
-<button id="send-btn" onclick="sendMessage()" disabled>Send to Loom</button>
+<div style="display:flex; gap:12px;">
+  <button id="send-btn" onclick="sendMessage()" disabled>Send to Loom</button>
+  <button onclick="document.getElementById('transcript').innerText=''; document.getElementById('send-btn').disabled=true; setStatus('Cleared. Tap mic to talk.');" style="padding:14px 24px; background:#444; color:#ccc; border:none; border-radius:8px; font-size:1em; cursor:pointer;">Clear</button>
+</div>
 
 <div id="history"></div>
 
@@ -155,43 +158,58 @@ let isListening = false;
 let pollInterval = null;
 let lastMessageTs = null;
 
-// Speech Recognition Setup
+// Speech Recognition Setup — single utterance mode (cleaner results)
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = 'en-US';
 
-  let finalTranscript = '';
+  function createRecognition() {
+    const r = new SpeechRecognition();
+    r.continuous = false;        // Single utterance — stops after you pause
+    r.interimResults = false;    // Only final results — no messy partials
+    r.lang = 'en-US';
+    r.maxAlternatives = 1;
 
-  recognition.onresult = (event) => {
-    let interim = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript + ' ';
-      } else {
-        interim += event.results[i][0].transcript;
+    r.onresult = (event) => {
+      const text = event.results[0][0].transcript;
+      const box = document.getElementById('transcript');
+      // Append to existing text (so multiple taps accumulate cleanly)
+      const existing = box.innerText.trim();
+      box.innerText = existing ? existing + ' ' + text : text;
+      document.getElementById('send-btn').disabled = false;
+      setStatus('Got it! Tap mic to add more, or Send.');
+    };
+
+    r.onend = () => {
+      // Single utterance ended — update UI
+      document.getElementById('mic-btn').classList.remove('listening');
+      isListening = false;
+      if (!document.getElementById('transcript').innerText.trim()) {
+        setStatus('Didn\'t catch that. Tap mic to try again.');
       }
-    }
-    document.getElementById('transcript').innerText = finalTranscript + interim;
-    document.getElementById('send-btn').disabled = !(finalTranscript.trim() || interim.trim());
-  };
+    };
 
-  recognition.onend = () => {
-    if (isListening) {
-      // Auto-restart if still in listening mode
-      try { recognition.start(); } catch(e) {}
-    }
-  };
+    r.onspeechend = () => {
+      r.stop();
+    };
 
-  recognition.onerror = (e) => {
-    if (e.error !== 'no-speech') {
-      setStatus('Error: ' + e.error);
-    }
-  };
+    r.onerror = (e) => {
+      document.getElementById('mic-btn').classList.remove('listening');
+      isListening = false;
+      if (e.error === 'no-speech') {
+        setStatus('No speech detected. Tap mic and speak.');
+      } else if (e.error === 'not-allowed') {
+        setStatus('Mic permission denied. Check browser settings.');
+      } else {
+        setStatus('Error: ' + e.error + '. Try again.');
+      }
+    };
+
+    return r;
+  }
+
+  recognition = createRecognition();
 } else {
-  document.getElementById('status').textContent = 'Speech recognition not supported in this browser. Try Chrome on Android or Safari on iOS.';
+  document.getElementById('status').textContent = 'Speech recognition not supported. Try Chrome on Android or Safari on iOS.';
 }
 
 function toggleListening() {
@@ -200,16 +218,18 @@ function toggleListening() {
     isListening = false;
     recognition.stop();
     btn.classList.remove('listening');
-    setStatus('Tap mic to continue, or edit and send');
+    setStatus('Tap mic to add more, or edit and send');
   } else {
     isListening = true;
-    document.getElementById('transcript').innerText = '';
+    // Create fresh recognition each time (avoids stale state on mobile)
+    recognition = createRecognition();
     try {
       recognition.start();
       btn.classList.add('listening');
-      setStatus('Listening... tap mic to stop');
+      setStatus('Listening... speak naturally, I\'ll catch it when you pause');
     } catch(e) {
       setStatus('Could not start: ' + e.message);
+      isListening = false;
     }
   }
 }
