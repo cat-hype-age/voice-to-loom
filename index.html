@@ -374,27 +374,37 @@ async function speakText(text) {
   }
 }
 
+const spokenMessages = new Set(); // Track which messages we've already spoken
+
 async function checkForResponses() {
   try {
     const resp = await fetch(API_URL, {
       method: 'POST',
       headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'list_slack', limit: 3 })
+      body: JSON.stringify({ action: 'list_slack', limit: 5 })
     });
     const data = await resp.json();
 
     for (const msg of (data.messages || []).reverse()) {
       const ts = msg.ts;
+      // Skip if we've already seen this message
+      if (spokenMessages.has(ts)) continue;
+      // Skip messages from before we started polling
       if (lastMessageTs && ts <= lastMessageTs) continue;
+
       if (msg.username === 'Loom') {
         const text = msg.text.substring(0, 500);
         addToHistory(text, 'received');
-        // Speak the response!
+        spokenMessages.add(ts);
         speakText(text);
       }
     }
+    // Always update to latest timestamp
     if (data.messages && data.messages.length > 0) {
-      lastMessageTs = data.messages[0].ts;
+      const latest = data.messages[0].ts;
+      if (!lastMessageTs || latest > lastMessageTs) {
+        lastMessageTs = latest;
+      }
     }
   } catch(e) {}
 }
