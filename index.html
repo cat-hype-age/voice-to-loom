@@ -128,7 +128,7 @@
 <h1>Talk to Loom</h1>
 <div class="subtitle">Voice → Slack → Council</div>
 
-<button id="mic-btn" onclick="toggleListening()">🎤</button>
+<button id="mic-btn" onclick="toggleListening().catch(e => document.getElementById('status').textContent = 'Error: ' + e.message)">🎤</button>
 <div id="status">Tap the mic to start talking</div>
 
 <div id="transcript" contenteditable="true" placeholder="Your message will appear here..."></div>
@@ -158,15 +158,16 @@ if (hash) history.replaceState(null, '', window.location.pathname);
 let API_KEY = localStorage.getItem('loom_api_key') || '';
 let OR_KEY = localStorage.getItem('loom_or_key') || '';
 
-// Only prompt if keys are truly missing (not on first QR load)
-if (!API_KEY) API_KEY = prompt('Enter your Council API key:') || '';
-if (API_KEY) localStorage.setItem('loom_api_key', API_KEY);
-if (!OR_KEY) OR_KEY = prompt('Enter your OpenRouter API key (for voice):') || '';
-if (OR_KEY) localStorage.setItem('loom_or_key', OR_KEY);
+// Show key status after DOM loads
+window.addEventListener('DOMContentLoaded', () => {
+  if (!API_KEY) document.getElementById('status').textContent = 'Slack key missing — rescan QR code';
+  else if (!OR_KEY) document.getElementById('status').textContent = 'Voice key missing — rescan QR code';
+});
 
 // Record audio with MediaRecorder, then send to Whisper for transcription
 async function toggleListening() {
   const btn = document.getElementById('mic-btn');
+  setStatus('Mic tapped...');
 
   if (isListening) {
     // Stop recording
