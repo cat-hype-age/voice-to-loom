@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Talk to Loom</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+  h1 {
+    font-size: 1.4em;
+    margin: 20px 0 8px;
+    color: #c4a35a;
+  }
+  .subtitle {
+    font-size: 0.85em;
+    color: #888;
+    margin-bottom: 24px;
+  }
+  #status {
+    font-size: 0.9em;
+    color: #aaa;
+    margin: 16px 0;
+    min-height: 24px;
+  }
+  #mic-btn {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 3px solid #c4a35a;
+    background: #2a2a4e;
+    color: #c4a35a;
+    font-size: 48px;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 20px 0;
+  }
+  #mic-btn.listening {
+    background: #c4a35a;
+    color: #1a1a2e;
+    box-shadow: 0 0 40px rgba(196, 163, 90, 0.4);
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 20px rgba(196, 163, 90, 0.3); }
+    50% { box-shadow: 0 0 50px rgba(196, 163, 90, 0.6); }
+  }
+  #transcript {
+    width: 100%;
+    max-width: 500px;
+    min-height: 100px;
+    background: #2a2a4e;
+    border: 1px solid #444;
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 1em;
+    color: #ddd;
+    line-height: 1.5;
+    margin: 16px 0;
+  }
+  #send-btn {
+    padding: 14px 40px;
+    background: #c4a35a;
+    color: #1a1a2e;
+    border: none;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  #send-btn:hover { background: #d4b36a; }
+  #send-btn:disabled { background: #555; color: #888; cursor: not-allowed; }
+  #history {
+    width: 100%;
+    max-width: 500px;
+    margin-top: 24px;
+  }
+  .msg {
+    padding: 12px 16px;
+    margin: 8px 0;
+    border-radius: 10px;
+    font-size: 0.9em;
+    line-height: 1.4;
+  }
+  .msg.sent {
+    background: #2a3a2e;
+    border: 1px solid #4a6a4a;
+  }
+  .msg.sent::before {
+    content: "You: ";
+    color: #c4a35a;
+    font-weight: 600;
+  }
+  .msg.received {
+    background: #2a2a4e;
+    border: 1px solid #4a4a6a;
+  }
+  .msg.received::before {
+    content: "Loom: ";
+    color: #c4a35a;
+    font-weight: 600;
+  }
+  .msg.status {
+    background: transparent;
+    border: none;
+    color: #666;
+    font-style: italic;
+    text-align: center;
+    font-size: 0.8em;
+  }
+</style>
+</head>
+<body>
+
+<h1>Talk to Loom</h1>
+<div class="subtitle">Voice → Slack → Council</div>
+
+<button id="mic-btn" onclick="toggleListening()">🎤</button>
+<div id="status">Tap the mic to start talking</div>
+
+<div id="transcript" contenteditable="true" placeholder="Your message will appear here..."></div>
+
+<button id="send-btn" onclick="sendMessage()" disabled>Send to Loom</button>
+
+<div id="history"></div>
+
+<script>
+const API_URL = 'https://nzmcbrhddyvfjeqwmmye.supabase.co/functions/v1/collaboration-api';
+// Key loaded from URL hash (e.g. #key=xxx) or localStorage or prompt
+let API_KEY = localStorage.getItem('loom_api_key') || '';
+if (window.location.hash.startsWith('#key=')) {
+  API_KEY = decodeURIComponent(window.location.hash.substring(5));
+  localStorage.setItem('loom_api_key', API_KEY);
+  history.replaceState(null, '', window.location.pathname);
+}
+if (!API_KEY) {
+  API_KEY = prompt('Enter your Council API key:') || '';
+  if (API_KEY) localStorage.setItem('loom_api_key', API_KEY);
+}
+let recognition = null;
+let isListening = false;
+let pollInterval = null;
+let lastMessageTs = null;
+
+// Speech Recognition Setup
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  let finalTranscript = '';
+
+  recognition.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript + ' ';
+      } else {
+        interim += event.results[i][0].transcript;
+      }
+    }
+    document.getElementById('transcript').innerText = finalTranscript + interim;
+    document.getElementById('send-btn').disabled = !(finalTranscript.trim() || interim.trim());
+  };
+
+  recognition.onend = () => {
+    if (isListening) {
+      // Auto-restart if still in listening mode
+      try { recognition.start(); } catch(e) {}
+    }
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error !== 'no-speech') {
+      setStatus('Error: ' + e.error);
+    }
+  };
+} else {
+  document.getElementById('status').textContent = 'Speech recognition not supported in this browser. Try Chrome on Android or Safari on iOS.';
+}
+
+function toggleListening() {
+  const btn = document.getElementById('mic-btn');
+  if (isListening) {
+    isListening = false;
+    recognition.stop();
+    btn.classList.remove('listening');
+    setStatus('Tap mic to continue, or edit and send');
+  } else {
+    isListening = true;
+    document.getElementById('transcript').innerText = '';
+    try {
+      recognition.start();
+      btn.classList.add('listening');
+      setStatus('Listening... tap mic to stop');
+    } catch(e) {
+      setStatus('Could not start: ' + e.message);
+    }
+  }
+}
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+async function sendMessage() {
+  const text = document.getElementById('transcript').innerText.trim();
+  if (!text) return;
+
+  document.getElementById('send-btn').disabled = true;
+  setStatus('Sending...');
+
+  try {
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'post_slack',
+        text: text,
+        username: 'Cat (Voice)'
+      })
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      addToHistory(text, 'sent');
+      document.getElementById('transcript').innerText = '';
+      setStatus('Sent! Loom will respond on Slack.');
+      // Start polling for responses
+      if (!pollInterval) startPolling();
+    } else {
+      setStatus('Failed to send: ' + JSON.stringify(data));
+    }
+  } catch(e) {
+    setStatus('Error: ' + e.message);
+  }
+  document.getElementById('send-btn').disabled = false;
+}
+
+function addToHistory(text, type) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + type;
+  div.textContent = text;
+  document.getElementById('history').prepend(div);
+}
+
+async function checkForResponses() {
+  try {
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'list_slack', limit: 3 })
+    });
+    const data = await resp.json();
+
+    for (const msg of (data.messages || []).reverse()) {
+      const ts = msg.ts;
+      if (lastMessageTs && ts <= lastMessageTs) continue;
+      if (msg.username === 'Loom') {
+        addToHistory(msg.text.substring(0, 300), 'received');
+      }
+    }
+    if (data.messages && data.messages.length > 0) {
+      lastMessageTs = data.messages[0].ts;
+    }
+  } catch(e) {}
+}
+
+function startPolling() {
+  // Get current latest timestamp first
+  checkForResponses();
+  pollInterval = setInterval(checkForResponses, 10000); // Check every 10 seconds
+}
+
+// Allow editing the transcript and sending with Enter
+document.getElementById('transcript').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// Update send button state on manual edits
+document.getElementById('transcript').addEventListener('input', () => {
+  document.getElementById('send-btn').disabled = !document.getElementById('transcript').innerText.trim();
+});
+</script>
+
+</body>
+</html>
