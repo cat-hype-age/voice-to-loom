@@ -170,87 +170,61 @@ window.addEventListener('DOMContentLoaded', () => {
   else if (!OR_KEY) document.getElementById('status').textContent = 'Voice key missing — rescan QR code';
 });
 
-// Record audio with MediaRecorder, then send to Whisper for transcription
-async function toggleListening() {
+// Speech recognition — Web Speech API (works without extra keys)
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function toggleListening() {
   const btn = document.getElementById('mic-btn');
-  setStatus('Mic tapped...');
 
   if (isListening) {
-    // Stop recording
+    isListening = false;
+    if (mediaRecorder) mediaRecorder.stop();
+    btn.classList.remove('listening');
+    setStatus('Tap mic to add more, or edit and send');
+    return;
+  }
+
+  if (!SpeechRecognition) {
+    setStatus('Speech recognition not supported. Try Chrome.');
+    return;
+  }
+
+  isListening = true;
+  btn.classList.add('listening');
+  setStatus('Listening... speak naturally');
+
+  const r = new SpeechRecognition();
+  r.continuous = false;
+  r.interimResults = false;
+  r.lang = 'en-US';
+
+  r.onresult = (event) => {
+    const text = event.results[0][0].transcript;
+    const box = document.getElementById('transcript');
+    const existing = box.innerText.trim();
+    box.innerText = existing ? existing + ' ' + text : text;
+    document.getElementById('send-btn').disabled = false;
+    setStatus('Got it! Tap mic to add more, or Send.');
+  };
+
+  r.onend = () => {
+    btn.classList.remove('listening');
+    isListening = false;
+  };
+
+  r.onerror = (e) => {
+    btn.classList.remove('listening');
+    isListening = false;
+    setStatus('Speech error: ' + e.error);
+  };
+
+  try {
+    r.start();
+    mediaRecorder = r; // Store reference for stop
+  } catch(e) {
+    setStatus('Could not start: ' + e.message);
     isListening = false;
     btn.classList.remove('listening');
-    mediaRecorder.stop();
-    setStatus('Transcribing with Whisper...');
-  } else {
-    // Start recording
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunks = [];
-      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        // Stop all tracks
-        stream.getTracks().forEach(t => t.stop());
-
-        if (audioChunks.length === 0) {
-          setStatus('No audio captured. Try again.');
-          return;
-        }
-
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-
-        // Send to OpenAI Whisper via OpenRouter
-        try {
-          const formData = new FormData();
-          formData.append('file', audioBlob, 'voice.webm');
-          formData.append('model', 'whisper-1');
-
-          const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + OR_KEY },
-            body: formData
-          });
-
-          if (!resp.ok) {
-            // Fallback: try OpenRouter's endpoint
-            const resp2 = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + OR_KEY },
-              body: formData
-            });
-            if (!resp2.ok) throw new Error('Whisper API returned ' + resp2.status);
-            var data = await resp2.json();
-          } else {
-            var data = await resp.json();
-          }
-
-          const text = data.text || '';
-          if (text) {
-            const box = document.getElementById('transcript');
-            const existing = box.innerText.trim();
-            box.innerText = existing ? existing + ' ' + text : text;
-            document.getElementById('send-btn').disabled = false;
-            setStatus('Got it! Tap mic to add more, or Send.');
-          } else {
-            setStatus('No speech detected. Try again.');
-          }
-        } catch(e) {
-          setStatus('Whisper error: ' + e.message);
-          console.error(e);
-        }
-      };
-
-      mediaRecorder.start();
-      isListening = true;
-      btn.classList.add('listening');
-      setStatus('Recording... tap mic when done speaking');
-    } catch(e) {
-      setStatus('Mic error: ' + e.message);
-    }
   }
 }
 
