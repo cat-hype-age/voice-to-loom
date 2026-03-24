@@ -154,10 +154,12 @@ hash.replace('#', '').split('&').forEach(p => {
 if (hashParams.key) localStorage.setItem('loom_api_key', hashParams.key);
 if (hashParams.orkey) localStorage.setItem('loom_or_key', hashParams.orkey);
 if (hashParams.groq) localStorage.setItem('loom_or_key', hashParams.groq);
+if (hashParams.xi) localStorage.setItem('loom_xi_key', hashParams.xi);
 if (hash) history.replaceState(null, '', window.location.pathname);
 
 let API_KEY = localStorage.getItem('loom_api_key') || '';
 let OR_KEY = localStorage.getItem('loom_or_key') || '';
+let XI_KEY = localStorage.getItem('loom_xi_key') || '';
 
 let isListening = false;
 let mediaRecorder = null;
@@ -338,6 +340,40 @@ function addToHistory(text, type) {
   document.getElementById('history').prepend(div);
 }
 
+// ElevenLabs TTS — speak Loom's responses aloud
+async function speakText(text) {
+  if (!XI_KEY || !text) return;
+
+  // Trim to reasonable length for TTS (avoid huge API calls)
+  const ttsText = text.substring(0, 500);
+
+  try {
+    // Using "River" voice — warm, thoughtful, fits Loom
+    const voiceId = '21m00Tcm4TlvDq8ikWAM'; // Rachel — clear, warm
+    const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': XI_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: ttsText,
+        model_id: 'eleven_turbo_v2_5',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+      })
+    });
+
+    if (!resp.ok) return; // Silently fail — text still shows
+
+    const audioBlob = await resp.blob();
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    audio.play().catch(() => {}); // May fail if user hasn't tapped yet (autoplay policy)
+  } catch(e) {
+    console.log('TTS error:', e);
+  }
+}
+
 async function checkForResponses() {
   try {
     const resp = await fetch(API_URL, {
@@ -351,7 +387,10 @@ async function checkForResponses() {
       const ts = msg.ts;
       if (lastMessageTs && ts <= lastMessageTs) continue;
       if (msg.username === 'Loom') {
-        addToHistory(msg.text.substring(0, 300), 'received');
+        const text = msg.text.substring(0, 500);
+        addToHistory(text, 'received');
+        // Speak the response!
+        speakText(text);
       }
     }
     if (data.messages && data.messages.length > 0) {
